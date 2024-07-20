@@ -24,46 +24,20 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collector;
 
-public class CalculateAverage_fragmede {
+public class CalculateAverage_juliovr {
 
     private static final String FILE = "./measurements.txt";
-    // private static final String FILE = "./yaku.txt";// "./measurements.txt";
 
-    private static record Measurement(String station, int value) {
-		public static Measurement of(String[] parts) {
-			//System.out.printf("string: %s!\n", parts[1]);
-			boolean negative = false;
-			int idx = 0;
-			if (parts[1].charAt(0) == '-') {
-				negative = true;
-				idx = 1;
-			}
-			int digit = (parts[1].charAt(idx)-48) * 10;
-			int digit2 = 0;
-			if (parts[1].charAt(idx+1) != '.') {
-				// two digit temperature
-				digit = (digit) * 10;
-				//System.out.println(parts[1].charAt(idx+1));
-				digit2 = (parts[1].charAt(idx+1)-48)*10;
-				idx++;
-			}
-			// if (parts[1].charAt(idx+2) != ".") {
-			// 	abort();
-			// }
-			int frac = parts[1].charAt(idx+2)-48;
-			//System.out.printf("parts, %d:%d:%d\n", digit, digit2, frac);
-			int value = digit + digit2 + frac;
-			if (negative) {
-				value = -value;
-			}
-			//System.out.printf("end value: %d\n", value);
-			return new Measurement(parts[0], value);
-		}
-	}
+    private static record Measurement(String station, double value) {
+        private Measurement(String[] parts) {
+            this(parts[0], Double.parseDouble(parts[1]));
+        }
+    }
 
     private static record ResultRow(double min, double mean, double max) {
+
         public String toString() {
-            return min + "/" + round(mean) + "/" + max;
+            return round(min) + "/" + round(mean) + "/" + round(max);
         }
 
         private double round(double value) {
@@ -79,6 +53,15 @@ public class CalculateAverage_fragmede {
     }
 
     public static void main(String[] args) throws IOException {
+        // Map<String, Double> measurements1 = Files.lines(Paths.get(FILE))
+        // .map(l -> l.split(";"))
+        // .collect(groupingBy(m -> m[0], averagingDouble(m -> Double.parseDouble(m[1]))));
+        //
+        // measurements1 = new TreeMap<>(measurements1.entrySet()
+        // .stream()
+        // .collect(toMap(e -> e.getKey(), e -> Math.round(e.getValue() * 10.0) / 10.0)));
+        // System.out.println(measurements1);
+
         Collector<Measurement, MeasurementAggregator, ResultRow> collector = Collector.of(
                 MeasurementAggregator::new,
                 (a, m) -> {
@@ -97,12 +80,12 @@ public class CalculateAverage_fragmede {
                     return res;
                 },
                 agg -> {
-                    return new ResultRow(agg.min / 10.0, agg.sum / 10.0 / agg.count, agg.max / 10.0);
+                    return new ResultRow(agg.min, (Math.round(agg.sum * 10.0) / 10.0) / agg.count, agg.max);
                 });
 
-        Map<String, ResultRow> measurements = new TreeMap<>(Files.lines(Paths.get(args[0]))
-                .map(l -> Measurement.of(l.split(";")))
-                .collect(groupingBy(Measurement::station, collector)));
+        Map<String, ResultRow> measurements = new TreeMap<>(Files.lines(Paths.get(FILE))
+                .map(l -> new Measurement(l.split(";")))
+                .collect(groupingBy(m -> m.station(), collector)));
 
         System.out.println(measurements);
     }
