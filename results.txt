@@ -1,0 +1,39 @@
+baseline:
+real    6m7.250s
+user    2m13.236s
+sys     0m13.056s
+
+
+remove stream:
+try (FileReader fileReader = new FileReader(FILE);
+        BufferedReader reader = new BufferedReader(fileReader)) {
+
+    String line;
+    while ((line = reader.readLine()) != null) {
+        Measurement m = new Measurement(line.split(";"));
+        MeasurementAggregator aggregator = aggregators.get(m.station);
+        if (aggregator == null) {
+            aggregator = new MeasurementAggregator();
+            aggregators.put(m.station, aggregator);
+        }
+
+        aggregator.min = Math.min(aggregator.min, m.value);
+        aggregator.max = Math.max(aggregator.max, m.value);
+        aggregator.sum += m.value;
+        aggregator.count++;
+    }
+}
+
+for (Map.Entry<String, MeasurementAggregator> entry : aggregators.entrySet()) {
+    String station = entry.getKey();
+    MeasurementAggregator agg = entry.getValue();
+
+    result.put(station, new ResultRow(agg.min, agg.sum / agg.count, agg.max));
+}
+
+System.out.println(result);
+
+real    5m47.384s
+user    2m4.887s
+sys     0m11.186s
+

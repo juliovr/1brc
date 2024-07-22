@@ -15,24 +15,33 @@
  */
 package dev.morling.onebrc;
 
-import static java.util.stream.Collectors.*;
+import sun.misc.Unsafe;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
-import java.nio.file.Files;
+import java.io.RandomAccessFile;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.stream.Collector;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class CalculateAverage_juliovr {
 
     private static final String FILE = "./measurements.txt";
-
-    private static record Measurement(String station, double value) {
-        private Measurement(String[] parts) {
-            this(parts[0], Double.parseDouble(parts[1]));
-        }
-    }
 
     private static record ResultRow(double min, double mean, double max) {
 
@@ -52,41 +61,209 @@ public class CalculateAverage_juliovr {
         private long count;
     }
 
-    public static void main(String[] args) throws IOException {
-        // Map<String, Double> measurements1 = Files.lines(Paths.get(FILE))
-        // .map(l -> l.split(";"))
-        // .collect(groupingBy(m -> m[0], averagingDouble(m -> Double.parseDouble(m[1]))));
-        //
-        // measurements1 = new TreeMap<>(measurements1.entrySet()
-        // .stream()
-        // .collect(toMap(e -> e.getKey(), e -> Math.round(e.getValue() * 10.0) / 10.0)));
-        // System.out.println(measurements1);
+    private static final int[] BITS_TABLE = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
 
-        Collector<Measurement, MeasurementAggregator, ResultRow> collector = Collector.of(
-                MeasurementAggregator::new,
-                (a, m) -> {
-                    a.min = Math.min(a.min, m.value);
-                    a.max = Math.max(a.max, m.value);
-                    a.sum += m.value;
-                    a.count++;
-                },
-                (agg1, agg2) -> {
-                    var res = new MeasurementAggregator();
-                    res.min = Math.min(agg1.min, agg2.min);
-                    res.max = Math.max(agg1.max, agg2.max);
-                    res.sum = agg1.sum + agg2.sum;
-                    res.count = agg1.count + agg2.count;
+    private static int countSetBits(long l) {
+        int count = 0;
+        for (int i = 0; i < 16; i++) {
+            int value = (int)(l & 0xF);
+            count += BITS_TABLE[value];
+            l >>= 4;
+        }
 
-                    return res;
-                },
-                agg -> {
-                    return new ResultRow(agg.min, (Math.round(agg.sum * 10.0) / 10.0) / agg.count, agg.max);
-                });
+        return count;
+    }
 
-        Map<String, ResultRow> measurements = new TreeMap<>(Files.lines(Paths.get(FILE))
-                .map(l -> new Measurement(l.split(";")))
-                .collect(groupingBy(m -> m.station(), collector)));
+    public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
+        long start = System.nanoTime();
 
-        System.out.println(measurements);
+        Map<String, ResultRow> result = new TreeMap<>();
+
+        // Map<String, MeasurementAggregator> aggregators = new HashMap<>(10_000);
+
+//        try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
+//            long filesize = fileChannel.size();
+//            MemorySegment segment = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, filesize, Arena.global());
+//            long address = segment.address();
+//
+//            Unsafe unsafe = Scanner.getUnsafe();
+//
+//            // MappedByteBuffer buffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, filesize);
+//            // int size = 1 << 30;
+//            // ByteBuffer dst = ByteBuffer.allocate(size);
+//            // mmap.read(dst);
+//
+//            byte[] bytes = new byte[64];
+//            for (int i = 0; i < bytes.length; i++) {
+//                bytes[i] = unsafe.getByte(address + i);
+//            }
+//
+//            String s = new String(bytes);
+//
+//            long i = 0;
+//            long lines = 0;
+//            while (i < filesize) {
+//                // char c = (char)buffer.get(i);
+//                long c = unsafe.getLong(address + (i * 8));
+//                if (c == '\n') {
+//                    lines++;
+//
+//                    if (lines % 50_000_000 == 0) {
+//                        System.out.println("Lines = " + lines);
+//                    }
+//                }
+//
+//                i++;
+//            }
+//
+//            System.out.println("Lines = " + lines);
+//        }
+
+        int cores = Runtime.getRuntime().availableProcessors();
+//        ExecutorService executor = Executors.newFixedThreadPool(cores);
+
+        System.out.println("Number of cores = " + cores);
+
+        try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
+            long fileSize = fileChannel.size();
+
+            long chunkSize = fileSize / cores;
+
+            MemorySegment segment = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, Arena.global());
+            long address = segment.address();
+            long end = address + fileSize;
+
+            // Unsafe could be unnecessary, because the values can be access directly by the segment
+//            byte b = segment.get(ValueLayout.OfInt.JAVA_BYTE, 0);
+            Unsafe unsafe = Scanner.getUnsafe();
+
+            long lines = 0;
+            while (address < end) {
+                long l = unsafe.getLong(address);
+                address += 8;
+
+                long maskNewLine = 0x0A0A0A0A0A0A0A0AL;
+                long masked = l ^ maskNewLine;
+                long hasNewLine = (masked - 0x0101010101010101L) & (~l) & (0x8080808080808080L);
+
+                lines += countSetBits(hasNewLine);
+//                byte[] bytes = new byte[4096];
+//                for (int i = 0; i < bytes.length; i++) {
+//                    bytes[i] = unsafe.getByte(address++);
+//                }
+//
+//                String s = new String(bytes, StandardCharsets.UTF_8);
+//                System.out.println(s);
+            }
+
+            System.out.println("Lines = " + lines);
+        }
+
+//        long lines = 1_000_000_000;
+//        long linesPerThread = lines / cores;
+//
+//        Future<?>[] futures = new Future[cores];
+//        try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
+//            long fileSize = fileChannel.size();
+//            long chunkSize = fileSize / cores;
+//
+//            long lastChunkSize = (fileSize - (chunkSize * (cores - 1)));
+//
+//            for (int i = 0; i < futures.length; i++) {
+//                long chunkStart = (chunkSize * i);
+//                int threadId = i;
+//
+//                futures[i] = executor.submit(() -> {
+//                    Map<String, MeasurementAggregator> aggregators = new HashMap<>(10_000);
+//
+//                    long chunkEnd = chunkStart + chunkSize;
+//                    long size = (threadId == futures.length - 1) ? lastChunkSize : chunkSize;
+//                    ByteBuffer buffer = ByteBuffer.allocate((int)size);
+//                    fileChannel.read(buffer);
+//
+////                    String s = new String(buffer.array(), StandardCharsets.UTF_8);
+//                    System.out.printf("[%d] = %d\n", threadId, threadId);
+//
+////                    while (currentLine < lineEnd) {
+////                        String line = raf.readLine();
+////                        String[] splitted = line.split(";");
+////                        String station = splitted[0];
+////                        double value = Double.parseDouble(splitted[1]);
+////                        MeasurementAggregator aggregator = aggregators.get(station);
+////                        if (aggregator == null) {
+////                            aggregator = new MeasurementAggregator();
+////                            aggregators.put(station, aggregator);
+////                        }
+////
+////                        aggregator.min = Math.min(aggregator.min, value);
+////                        aggregator.max = Math.max(aggregator.max, value);
+////                        aggregator.sum += value;
+////                        aggregator.count++;
+////
+////                        currentLine++;
+////                        if (currentLine % 1_000_000 == 0) {
+////                            System.out.println("Line = " + currentLine);
+////                        }
+////                    }
+//
+//                    return aggregators;
+//                });
+//            }
+//        }
+
+//        Map<String, MeasurementAggregator> aggregators = new HashMap<>(10_000);
+//        for (int i = 0; i < futures.length; i++) {
+//            Map<String, MeasurementAggregator> aggThreadResult = (Map<String, MeasurementAggregator>)futures[i].get();
+//            for (Map.Entry<String, MeasurementAggregator> entry : aggThreadResult.entrySet()) {
+//                String station = entry.getKey();
+//                MeasurementAggregator agg = entry.getValue();
+//
+//                MeasurementAggregator finalAggregator = aggregators.get(station);
+//                if (finalAggregator == null) {
+//                    finalAggregator = new MeasurementAggregator();
+//                    aggregators.put(station, finalAggregator);
+//                }
+//
+//                finalAggregator.min = Math.min(finalAggregator.min, agg.min);
+//                finalAggregator.max = Math.max(finalAggregator.max, agg.max);
+//                finalAggregator.sum += finalAggregator.sum;
+//                finalAggregator.count += finalAggregator.count;
+//            }
+//        }
+//
+//        for (Map.Entry<String, MeasurementAggregator> entry : aggregators.entrySet()) {
+//            String station = entry.getKey();
+//            MeasurementAggregator agg = entry.getValue();
+//
+//            result.put(station, new ResultRow(agg.min, agg.sum / agg.count, agg.max));
+//        }
+//
+//        System.out.println(result);
+
+        long finish = System.nanoTime();
+        long timeElapsed = finish - start;
+
+        System.out.println("Time elapsed = " + (timeElapsed / 1_000_000_000) + " seconds");
+    }
+
+    private static class Scanner {
+
+        private static final Unsafe UNSAFE = initUnsafe();
+
+        private static Unsafe initUnsafe() {
+            try {
+                Field f = Unsafe.class.getDeclaredField("theUnsafe");
+                f.setAccessible(true);
+                return (Unsafe)f.get(Unsafe.class);
+            }
+            catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public static Unsafe getUnsafe() {
+            return UNSAFE;
+        }
+
     }
 }
