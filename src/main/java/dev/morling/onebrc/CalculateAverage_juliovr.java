@@ -17,31 +17,22 @@ package dev.morling.onebrc;
 
 import sun.misc.Unsafe;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.lang.reflect.Field;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class CalculateAverage_juliovr {
 
-    private static final String FILE = "./measurements.txt";
+    private static final String FILE = "./measurements_test.txt";
 
     private static record ResultRow(double min, double mean, double max) {
 
@@ -61,6 +52,7 @@ public class CalculateAverage_juliovr {
         private long count;
     }
 
+    // TODO: generate entire table for long values
     private static final int[] BITS_TABLE = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
 
     private static int countSetBits(long l) {
@@ -119,15 +111,12 @@ public class CalculateAverage_juliovr {
 //            System.out.println("Lines = " + lines);
 //        }
 
-        int cores = Runtime.getRuntime().availableProcessors();
-//        ExecutorService executor = Executors.newFixedThreadPool(cores);
-
-        System.out.println("Number of cores = " + cores);
+//        int nThreads = Runtime.getRuntime().availableProcessors();
+        int nThreads = 1;
+        System.out.println("Number of threads = " + nThreads);
 
         try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
             long fileSize = fileChannel.size();
-
-            long chunkSize = fileSize / cores;
 
             MemorySegment segment = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, Arena.global());
             long address = segment.address();
@@ -137,27 +126,40 @@ public class CalculateAverage_juliovr {
 //            byte b = segment.get(ValueLayout.OfInt.JAVA_BYTE, 0);
             Unsafe unsafe = Scanner.getUnsafe();
 
-            long lines = 0;
-            while (address < end) {
-                long l = unsafe.getLong(address);
-                address += 8;
+            long chunkSize = fileSize / nThreads;
+            long lastChunkSize = (fileSize - (chunkSize * (nThreads - 1)));
 
-                long maskNewLine = 0x0A0A0A0A0A0A0A0AL;
-                long masked = l ^ maskNewLine;
-                long hasNewLine = (masked - 0x0101010101010101L) & (~l) & (0x8080808080808080L);
 
-                lines += countSetBits(hasNewLine);
-//                byte[] bytes = new byte[4096];
-//                for (int i = 0; i < bytes.length; i++) {
-//                    bytes[i] = unsafe.getByte(address++);
-//                }
-//
-//                String s = new String(bytes, StandardCharsets.UTF_8);
-//                System.out.println(s);
+            final Thread[] threads = new Thread[nThreads];
+            final long[] lines = new long[nThreads];
+            final AtomicLong counter = new AtomicLong(address);
+
+            for (int i = 0; i < nThreads; i++) {
+                long size = (i == nThreads - 1) ? lastChunkSize : chunkSize;
+                long addressStart = address + (chunkSize * i);
+                long addressEnd = addressStart + size;
+
+                final int threadId = i;
+                threads[i] = new Thread(() -> {
+                    long countLinesThread = process(counter, unsafe, addressStart, addressEnd);
+
+                    lines[threadId] = countLinesThread;
+                });
+                threads[i].start();
             }
 
-            System.out.println("Lines = " + lines);
+            for (int i = 0; i < nThreads; i++) {
+                threads[i].join();
+            }
+
+            long totalLines = 0;
+            for (int i = 0; i < lines.length; i++) {
+                totalLines += lines[i];
+            }
+            System.out.println("Lines = " + totalLines);
         }
+
+
 
 //        long lines = 1_000_000_000;
 //        long linesPerThread = lines / cores;
@@ -244,6 +246,70 @@ public class CalculateAverage_juliovr {
         long timeElapsed = finish - start;
 
         System.out.println("Time elapsed = " + (timeElapsed / 1_000_000_000) + " seconds");
+        System.out.println("Time elapsed = " + timeElapsed + " nanoseconds");
+    }
+
+    private static long nextNewLine(int address) {
+        return 0;
+    }
+
+    private static long process(AtomicLong counter, Unsafe unsafe, long addressStart, long addressEnd) {
+        long currentAddress = addressStart;
+        long countLinesThread = 0;
+
+        long lineStart = 0;
+        long lineEnd = 0;
+        while (currentAddress <= addressEnd) {
+            byte[] bytes = new byte[8];
+            bytes[0] = unsafe.getByte(currentAddress + 0);
+            bytes[1] = unsafe.getByte(currentAddress + 1);
+            bytes[2] = unsafe.getByte(currentAddress + 2);
+            bytes[3] = unsafe.getByte(currentAddress + 3);
+            bytes[4] = unsafe.getByte(currentAddress + 4);
+            bytes[5] = unsafe.getByte(currentAddress + 5);
+            bytes[6] = unsafe.getByte(currentAddress + 6);
+            bytes[7] = unsafe.getByte(currentAddress + 7);
+
+            String s = new String(bytes, StandardCharsets.UTF_8);
+
+            long value = unsafe.getLong(currentAddress);
+            currentAddress += 8;
+
+
+//            value = 0x0A0000000000000AL;
+
+            long maskNewLine = 0x0A0A0A0A0A0A0A0AL;
+            long masked = value ^ maskNewLine;
+            long posNewLine = (masked - 0x0101010101010101L) & (~value) & (0x8080808080808080L);
+
+            int numberOfTrailingZeros = Long.numberOfTrailingZeros(posNewLine);
+
+            countLinesThread += countSetBits(posNewLine);
+
+            if (countLinesThread == 1) {
+
+            }
+
+
+            long maskSemicolon = 0x3B3B3B3B3B3B3B3BL;
+            long maskedSemicolon = value ^ maskSemicolon;
+            long hasSemicolon = (maskedSemicolon - 0x0101010101010101L) & (~value) & (0x8080808080808080L);
+
+
+
+            int x = 5;
+
+//                        byte[] bytes = new byte[100]; // Challenge's rules says the station name is up to 100 bytes.
+//                        for (int byteIndex = 0; byteIndex < bytes.length; byteIndex++) {
+//                            // TODO: fill bytes
+//                            bytes[byteIndex] = 0;
+//                        }
+
+//                        String stationName = new String(bytes, StandardCharsets.UTF_8);
+//                        System.out.println(stationName);
+        }
+
+        return countLinesThread;
     }
 
     private static class Scanner {
