@@ -75,7 +75,8 @@ public class CalculateAverage_juliovr {
 
         Map<String, ResultRow> result = new TreeMap<>();
 
-        int nThreads = 1;
+//        int nThreads = Runtime.getRuntime().availableProcessors();
+        int nThreads = 2;
         System.out.println("Number of threads = " + nThreads);
 
         try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
@@ -156,35 +157,56 @@ public class CalculateAverage_juliovr {
         return address;
     }
 
+    private static long nextSemicolon(long address) {
+        while (true) {
+            long value = unsafe.getLong(address);
+
+            long mask = 0x3B3B3B3B3B3B3B3BL;
+            long masked = value ^ mask;
+            long posSemicolon = (masked - 0x0101010101010101L) & (~value) & (0x8080808080808080L);
+
+            if (posSemicolon != 0) {
+                address += Long.numberOfTrailingZeros(posSemicolon) >>> 3; // Divide by 3 to get the index of the char
+                break;
+            }
+
+            address += 8;
+        }
+
+        return address;
+    }
+
     private static long process(long addressStart, long addressEnd) {
         long currentAddress = addressStart;
         long countLinesThread = 0;
 
-        long lineStart = 0;
-        long lineEnd = 0;
+        // TODO: check why with 2 thread it prints a station "chita" (comes from Wichita, but that it's been printed as well).
+        // It could be the case when the chunk assigned to one thread is not complete, so the remaining chunk must be merge with the other
+        // Maybe I need to split the file by lines to make it easier.
+        // To do this, I'm thinking in pass an AtomicLong to the function and calculate the chunk size (addressStart and addressEnd) here.
+        // An easier way could be do the partition earlier:
+        //   1. Starting at baseAddress + chunkSize, look for the next new line (function already implemented).
+        //   2. The pointer returned is the addressEnd to pass to the thread.
+        //   3. This addressEnd + 1 would be the addressStart to the next one.
+        //   4. REMEMBER: the last thread ends in the fileSize address.
         while (currentAddress < addressEnd) {
             long value = unsafe.getLong(currentAddress);
 
             long posNewLine = nextNewLine(currentAddress);
+            long posSemicolon = nextSemicolon(currentAddress);
 
 //            countLinesThread += countSetBits(posNewLine);
 
             byte[] bytes = new byte[100];
-            int i;
-            for (i = 0; i < posNewLine - currentAddress; i++) {
+            int length = (int)(posSemicolon - currentAddress);
+            for (int i = 0; i < length; i++) {
                 bytes[i] = unsafe.getByte(currentAddress + i);
             }
-            for (; i < bytes.length; i++) {
-                bytes[i] = 0;
-            }
-            String s = new String(bytes, StandardCharsets.UTF_8);
 
+            String s = new String(bytes, 0, length, StandardCharsets.UTF_8);
 
-            long maskSemicolon = 0x3B3B3B3B3B3B3B3BL;
-            long maskedSemicolon = value ^ maskSemicolon;
-            long hasSemicolon = (maskedSemicolon - 0x0101010101010101L) & (~value) & (0x8080808080808080L);
+            System.out.println(s);
 
-//            currentAddress += 8;
             currentAddress = (posNewLine + 1);
         }
 
