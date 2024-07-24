@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class CalculateAverage_juliovr {
 
-    private static final String FILE = "./measurements_test.txt";
+    private static final String FILE = "./measurements.txt";
 
     private static record ResultRow(double min, double mean, double max) {
 
@@ -75,8 +75,8 @@ public class CalculateAverage_juliovr {
 
         Map<String, ResultRow> result = new TreeMap<>();
 
-//        int nThreads = Runtime.getRuntime().availableProcessors();
-        int nThreads = 2;
+        int nThreads = Runtime.getRuntime().availableProcessors();
+//        int nThreads = 2;
         System.out.println("Number of threads = " + nThreads);
 
         try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
@@ -84,19 +84,19 @@ public class CalculateAverage_juliovr {
 
             MemorySegment segment = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, Arena.global());
             long address = segment.address();
-            long end = address + fileSize;
+            long fileSizeAddress = address + fileSize;
 
             long chunkSize = fileSize / nThreads;
-            long lastChunkSize = (fileSize - (chunkSize * (nThreads - 1)));
-
 
             final Thread[] threads = new Thread[nThreads];
             final long[] lines = new long[nThreads];
 
+            long currentAddress = address;
             for (int i = 0; i < nThreads; i++) {
-                long size = (i == nThreads - 1) ? lastChunkSize : chunkSize;
-                long addressStart = address + (chunkSize * i);
-                long addressEnd = addressStart + size;
+                long addressStart = currentAddress;
+                long addressEnd = (i == nThreads - 1) ? fileSizeAddress : nextNewLine(addressStart + chunkSize);
+
+                currentAddress = addressEnd + 1;
 
                 final int threadId = i;
                 threads[i] = new Thread(() -> {
@@ -180,32 +180,23 @@ public class CalculateAverage_juliovr {
         long currentAddress = addressStart;
         long countLinesThread = 0;
 
-        // TODO: check why with 2 thread it prints a station "chita" (comes from Wichita, but that it's been printed as well).
-        // It could be the case when the chunk assigned to one thread is not complete, so the remaining chunk must be merge with the other
-        // Maybe I need to split the file by lines to make it easier.
-        // To do this, I'm thinking in pass an AtomicLong to the function and calculate the chunk size (addressStart and addressEnd) here.
-        // An easier way could be do the partition earlier:
-        //   1. Starting at baseAddress + chunkSize, look for the next new line (function already implemented).
-        //   2. The pointer returned is the addressEnd to pass to the thread.
-        //   3. This addressEnd + 1 would be the addressStart to the next one.
-        //   4. REMEMBER: the last thread ends in the fileSize address.
         while (currentAddress < addressEnd) {
-            long value = unsafe.getLong(currentAddress);
+//            long value = unsafe.getLong(currentAddress);
 
             long posNewLine = nextNewLine(currentAddress);
-            long posSemicolon = nextSemicolon(currentAddress);
+//            long posSemicolon = nextSemicolon(currentAddress);
 
-//            countLinesThread += countSetBits(posNewLine);
+            countLinesThread++;
 
-            byte[] bytes = new byte[100];
-            int length = (int)(posSemicolon - currentAddress);
-            for (int i = 0; i < length; i++) {
-                bytes[i] = unsafe.getByte(currentAddress + i);
-            }
+//            byte[] bytes = new byte[100];
+//            int length = (int)(posSemicolon - currentAddress);
+//            for (int i = 0; i < length; i++) {
+//                bytes[i] = unsafe.getByte(currentAddress + i);
+//            }
 
-            String s = new String(bytes, 0, length, StandardCharsets.UTF_8);
-
-            System.out.println(s);
+//            String s = new String(bytes, 0, length, StandardCharsets.UTF_8);
+//
+//            System.out.println(s);
 
             currentAddress = (posNewLine + 1);
         }

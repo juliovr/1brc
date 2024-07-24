@@ -37,3 +37,24 @@ real    5m47.384s
 user    2m4.887s
 sys     0m11.186s
 
+
+
+Just counting lines
+New method: split the chunks by the next new line, meaning the new lines and semicolons does not appear in different threads.
+nThreads = 1:
+    Cold:
+        Time elapsed = 7 seconds
+        Time elapsed = 7405898600 nanoseconds
+    Normal:
+        Time elapsed = 7 seconds
+        Time elapsed = 7307333700 nanoseconds
+
+nThreads = 2:
+    Normal:
+        Time elapsed = 3 seconds
+        Time elapsed = 3971195200 nanoseconds
+
+nThreads = 20 (available cores)
+    Normal:
+        Time elapsed = 0 seconds
+        Time elapsed = 941629000 nanoseconds
