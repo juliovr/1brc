@@ -61,6 +61,7 @@ public class CalculateAverage_baseline {
         // .stream()
         // .collect(toMap(e -> e.getKey(), e -> Math.round(e.getValue() * 10.0) / 10.0)));
         // System.out.println(measurements1);
+        long start = System.nanoTime();
 
         Collector<Measurement, MeasurementAggregator, ResultRow> collector = Collector.of(
                 MeasurementAggregator::new,
@@ -88,5 +89,11 @@ public class CalculateAverage_baseline {
                 .collect(groupingBy(m -> m.station(), collector)));
 
         System.out.println(measurements);
+
+        long finish = System.nanoTime();
+        long timeElapsed = finish - start;
+
+        System.out.println("Time elapsed = " + (timeElapsed / 1_000_000_000) + " seconds");
+        System.out.println("Time elapsed = " + timeElapsed + " nanoseconds");
     }
 }

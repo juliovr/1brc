@@ -25,31 +25,39 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class CalculateAverage_juliovr {
 
+    private static final int MAX_STATIONS = 10_000;
+//    private static final String FILE = "./measurements_test.txt";
     private static final String FILE = "./measurements.txt";
 
-    private static record ResultRow(double min, double mean, double max) {
+    private static class Result {
+        private short min = Short.MAX_VALUE;
+        private short max = Short.MIN_VALUE;
+        private double sum;
+        private int count;
+//        private byte[] stationNameBytes;
+        private long stationNameAddressStart;
 
         public String toString() {
-            return round(min) + "/" + round(mean) + "/" + round(max);
+            return round((double)min) + "/" + round((double)sum / (double)count) + "/" + round((double)max);
         }
 
         private double round(double value) {
             return Math.round(value * 10.0) / 10.0;
         }
-    };
 
-    private static class MeasurementAggregator {
-        private double min = Double.POSITIVE_INFINITY;
-        private double max = Double.NEGATIVE_INFINITY;
-        private double sum;
-        private long count;
+//        public String calculateStationName() {
+//            return "asd";
+////            return new String(stationNameBytes, 0, stationNameLength, StandardCharsets.UTF_8);
+//        }
     }
 
     // TODO: generate entire table for long values
@@ -73,10 +81,8 @@ public class CalculateAverage_juliovr {
     public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
         long start = System.nanoTime();
 
-        Map<String, ResultRow> result = new TreeMap<>();
-
-        int nThreads = Runtime.getRuntime().availableProcessors();
 //        int nThreads = 2;
+        int nThreads = Runtime.getRuntime().availableProcessors();
         System.out.println("Number of threads = " + nThreads);
 
         try (FileChannel fileChannel = FileChannel.open(Paths.get(FILE), StandardOpenOption.READ)) {
@@ -92,7 +98,12 @@ public class CalculateAverage_juliovr {
             final long[] lines = new long[nThreads];
 
             long currentAddress = address;
+            Map<String, Result>[] aggregators = new Map[nThreads];
             for (int i = 0; i < nThreads; i++) {
+                if (currentAddress >= fileSizeAddress) {
+                    break;
+                }
+
                 long addressStart = currentAddress;
                 long addressEnd = (i == nThreads - 1) ? fileSizeAddress : nextNewLine(addressStart + chunkSize);
 
@@ -100,15 +111,47 @@ public class CalculateAverage_juliovr {
 
                 final int threadId = i;
                 threads[i] = new Thread(() -> {
-                    long countLinesThread = process(addressStart, addressEnd);
+//                    List<Result> result = new ArrayList<>(MAX_STATIONS);
+                    Map<String, Result> result = new HashMap<>(MAX_STATIONS);
+
+                    long countLinesThread = process(addressStart, addressEnd, result);
 
                     lines[threadId] = countLinesThread;
+                    aggregators[threadId] = result;
                 });
                 threads[i].start();
             }
 
             for (int i = 0; i < nThreads; i++) {
-                threads[i].join();
+                if (threads[i] != null) {
+                    threads[i].join();
+                }
+            }
+
+            // Merge results
+            Map<String, Result> result = new TreeMap<>();
+            for (int i = 0; i < aggregators.length; i++) {
+                if (aggregators[i] == null) {
+                    continue;
+                }
+
+                for (Map.Entry<String, Result> entry : aggregators[i].entrySet()) {
+                    String stationName = entry.getKey();
+                    Result r = entry.getValue();
+                    Result existing = result.get(stationName);
+                    if (existing == null) {
+                        result.put(stationName, r);
+                    } else {
+                        if (r.min < existing.min) {
+                            existing.min = r.min;
+                        }
+                        if (r.max > existing.max) {
+                            existing.max = r.max;
+                        }
+                        existing.sum += r.sum;
+                        existing.count++;
+                    }
+                }
             }
 
             long totalLines = 0;
@@ -116,7 +159,10 @@ public class CalculateAverage_juliovr {
                 totalLines += lines[i];
             }
             System.out.println("Lines = " + totalLines);
+
+            System.out.println(result);
         }
+
 
         long finish = System.nanoTime();
         long timeElapsed = finish - start;
@@ -176,27 +222,41 @@ public class CalculateAverage_juliovr {
         return address;
     }
 
-    private static long process(long addressStart, long addressEnd) {
+    private static long process(long addressStart, long addressEnd, Map<String, Result> accumulative) {
         long currentAddress = addressStart;
         long countLinesThread = 0;
 
+
+        byte[] bytes = new byte[100];
         while (currentAddress < addressEnd) {
 //            long value = unsafe.getLong(currentAddress);
 
             long posNewLine = nextNewLine(currentAddress);
-//            long posSemicolon = nextSemicolon(currentAddress);
+            long posSemicolon = nextSemicolon(currentAddress);
 
             countLinesThread++;
 
-//            byte[] bytes = new byte[100];
-//            int length = (int)(posSemicolon - currentAddress);
-//            for (int i = 0; i < length; i++) {
-//                bytes[i] = unsafe.getByte(currentAddress + i);
-//            }
+            int stationNameLength = (int) (posSemicolon - currentAddress);
+            int lineLength = (int) (posNewLine - currentAddress);
+            for (int i = 0; i < stationNameLength; i++) {
+                bytes[i] = unsafe.getByte(currentAddress + i);
+            }
 
-//            String s = new String(bytes, 0, length, StandardCharsets.UTF_8);
-//
-//            System.out.println(s);
+            String stationName = new String(bytes, 0, stationNameLength, StandardCharsets.UTF_8);
+//            System.out.println(stationName);
+            // TODO: optimize this
+//            double value = Double.parseDouble(new String(bytes, stationNameLength + 1, lineLength - stationNameLength - 1));
+
+            Result r = new Result();
+//            r.min = value;
+//            r.max = value;
+//            r.sum = value;
+            r.count = 1;
+//            r.stationNameBytes = bytes;
+            r.stationNameAddressStart = currentAddress;
+//            r.stationNameLength = stationNameLength;
+
+            accumulative.put(stationName, r);
 
             currentAddress = (posNewLine + 1);
         }

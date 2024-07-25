@@ -58,3 +58,9 @@ nThreads = 20 (available cores)
     Normal:
         Time elapsed = 0 seconds
         Time elapsed = 941629000 nanoseconds
+
+
+
+Processing the results:
+    Time elapsed = 6 seconds
+    Time elapsed = 6141731500 nanoseconds
