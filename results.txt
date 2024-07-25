@@ -62,5 +62,9 @@ nThreads = 20 (available cores)
 
 
 Processing the results:
-    Time elapsed = 6 seconds
-    Time elapsed = 6141731500 nanoseconds
+    baseline:
+        Time elapsed = 125 seconds
+        Time elapsed = 125501872100 nanoseconds
+    mine:
+        Time elapsed = 6 seconds
+        Time elapsed = 6141731500 nanoseconds
