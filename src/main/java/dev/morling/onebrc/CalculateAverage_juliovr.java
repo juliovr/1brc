@@ -25,9 +25,7 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
@@ -43,21 +41,14 @@ public class CalculateAverage_juliovr {
         private short max = Short.MIN_VALUE;
         private double sum;
         private int count;
-//        private byte[] stationNameBytes;
-        private long stationNameAddressStart;
 
         public String toString() {
             return round((double)min) + "/" + round((double)sum / (double)count) + "/" + round((double)max);
         }
 
         private double round(double value) {
-            return Math.round(value * 10.0) / 10.0;
+            return Math.round(value) / 10.0;
         }
-
-//        public String calculateStationName() {
-//            return "asd";
-////            return new String(stationNameBytes, 0, stationNameLength, StandardCharsets.UTF_8);
-//        }
     }
 
     // TODO: generate entire table for long values
@@ -76,7 +67,18 @@ public class CalculateAverage_juliovr {
 
     // Unsafe could be unnecessary, because the values can be access directly by the segment
 //            byte b = segment.get(ValueLayout.OfInt.JAVA_BYTE, 0);
-    private static final Unsafe unsafe = Scanner.getUnsafe();
+    private static final Unsafe unsafe = initUnsafe();
+
+    private static Unsafe initUnsafe() {
+        try {
+            Field f = Unsafe.class.getDeclaredField("theUnsafe");
+            f.setAccessible(true);
+            return (Unsafe)f.get(Unsafe.class);
+        }
+        catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
         long start = System.nanoTime();
@@ -111,7 +113,6 @@ public class CalculateAverage_juliovr {
 
                 final int threadId = i;
                 threads[i] = new Thread(() -> {
-//                    List<Result> result = new ArrayList<>(MAX_STATIONS);
                     Map<String, Result> result = new HashMap<>(MAX_STATIONS);
 
                     long countLinesThread = process(addressStart, addressEnd, result);
@@ -149,7 +150,7 @@ public class CalculateAverage_juliovr {
                             existing.max = r.max;
                         }
                         existing.sum += r.sum;
-                        existing.count++;
+                        existing.count += r.count;
                     }
                 }
             }
@@ -228,35 +229,48 @@ public class CalculateAverage_juliovr {
 
 
         byte[] bytes = new byte[100];
+        byte[] bytesDouble = new byte[4];
         while (currentAddress < addressEnd) {
-//            long value = unsafe.getLong(currentAddress);
-
             long posNewLine = nextNewLine(currentAddress);
             long posSemicolon = nextSemicolon(currentAddress);
 
             countLinesThread++;
 
             int stationNameLength = (int) (posSemicolon - currentAddress);
-            int lineLength = (int) (posNewLine - currentAddress);
+            int valueLength = (int)(posNewLine - posSemicolon - 1);
             for (int i = 0; i < stationNameLength; i++) {
                 bytes[i] = unsafe.getByte(currentAddress + i);
             }
 
             String stationName = new String(bytes, 0, stationNameLength, StandardCharsets.UTF_8);
-//            System.out.println(stationName);
+
+            int index = 0;
+            for (int i = 0; i < valueLength; i++) {
+                byte aByte = unsafe.getByte(posSemicolon + 1 + i);
+                if (aByte == '.') {
+                    continue;
+                }
+                bytesDouble[index++] = aByte;
+            }
+
             // TODO: optimize this
-//            double value = Double.parseDouble(new String(bytes, stationNameLength + 1, lineLength - stationNameLength - 1));
+            short value = Short.parseShort(new String(bytesDouble, 0, valueLength - 1));
 
-            Result r = new Result();
-//            r.min = value;
-//            r.max = value;
-//            r.sum = value;
-            r.count = 1;
-//            r.stationNameBytes = bytes;
-            r.stationNameAddressStart = currentAddress;
-//            r.stationNameLength = stationNameLength;
+            Result r = accumulative.get(stationName);
+            if (r == null) {
+                r = new Result();
 
-            accumulative.put(stationName, r);
+                accumulative.put(stationName, r);
+            }
+
+            if (value < r.min) {
+                r.min = value;
+            }
+            if (value > r.max) {
+                r.max = value;
+            }
+            r.sum += value;
+            r.count++;
 
             currentAddress = (posNewLine + 1);
         }
@@ -264,24 +278,4 @@ public class CalculateAverage_juliovr {
         return countLinesThread;
     }
 
-    private static class Scanner {
-
-        private static final Unsafe UNSAFE = initUnsafe();
-
-        private static Unsafe initUnsafe() {
-            try {
-                Field f = Unsafe.class.getDeclaredField("theUnsafe");
-                f.setAccessible(true);
-                return (Unsafe)f.get(Unsafe.class);
-            }
-            catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        public static Unsafe getUnsafe() {
-            return UNSAFE;
-        }
-
-    }
 }

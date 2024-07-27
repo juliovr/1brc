@@ -67,4 +67,4 @@ Processing the results:
         Time elapsed = 125501872100 nanoseconds
     mine:
         Time elapsed = 6 seconds
-        Time elapsed = 6141731500 nanoseconds
+        Time elapsed = 6503361800 nanoseconds
