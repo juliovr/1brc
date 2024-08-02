@@ -78,16 +78,26 @@ static int count_set_bits(u64 l) {
 }
 
 typedef struct ThreadParams {
-    char *file;
-    int offset;
-    int tid;
+    char *file_ptr_start;
+    char *file_ptr_end;
+    int lines;
 } ThreadParams;
 
 DWORD thread_function(LPVOID lp_param)
 {
     ThreadParams *params = (ThreadParams *)lp_param;
     
-    printf("char file = %c\n", *(params->file + params->tid));
+    int lines = 0;
+    char *ptr = params->file_ptr_start;
+    while (ptr < params->file_ptr_end) {
+        if (*ptr == '\n') {
+            lines++;
+        }
+        
+        ptr++;
+    }
+    
+    params->lines = lines;
     
     return 0;
 }
@@ -107,8 +117,8 @@ int main(int argc, char **argv)
 
     LARGE_INTEGER start = win32_get_wall_clock();
 
-    // char *filename = "../measurements.txt";
-    char *filename = "../measurements_test.txt";
+    char *filename = "../measurements.txt";
+    // char *filename = "../measurements_test.txt";
     HANDLE file_handle = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, NULL);
     if (file_handle == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "ERROR: Cannot open file %s, error code = %d\n", filename, GetLastError());
@@ -121,40 +131,42 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    // TODO: specify an offset to see how to split the reading between multiple threads.
     LPVOID file = MapViewOfFileEx(mmap, FILE_MAP_READ, 0, /*system_info.dwAllocationGranularity*/0, 0, NULL);
     if (file == NULL) {
         fprintf(stderr, "ERROR: Cannot map view file, error code = %d\n", GetLastError());
         exit(1);
     }
-
-     
+    
+    LARGE_INTEGER file_size_result;
+    GetFileSizeEx(file_handle, &file_size_result);
+    s64 file_size = file_size_result.QuadPart;
+    
+    
     int n_threads = system_info.dwNumberOfProcessors;
+    // int n_threads = 1;
     HANDLE *threads = (HANDLE *)malloc(n_threads * sizeof(HANDLE));
     ThreadParams *thread_params = (ThreadParams *)malloc(n_threads * sizeof(ThreadParams));
     
-    // TODO: this works, so calculate the offset (chunk_size) to process the file in thread_function
+    s64 chunk_size = file_size / n_threads;
+    int last_chunk = (int)(file_size - (chunk_size * (n_threads - 1)));
     for (int i = 0; i < n_threads; i++) {
-        thread_params[i].tid = i;
-        thread_params[i].file = file;
+        char *file_start = ((char *)file) + (chunk_size * i);
+        thread_params[i].file_ptr_start = file_start;
+        thread_params[i].file_ptr_end = (i == n_threads - 1) ? ((char *)file) + file_size : file_start + chunk_size;
         threads[i] = CreateThread(NULL, 0, thread_function, thread_params + i, 0, 0);
     }
     
     WaitForMultipleObjects(n_threads, threads, TRUE, INFINITE);
+    
+    int lines = 0;
+    for (int i = 0; i < n_threads; i++) {
+        lines += thread_params[i].lines;
+    }
 
+    printf("lines = %d\n", lines);
 
     // printf("%s\n", (char *)file);
 
-    // Count new lines
-    int new_lines = 0;
-    char *ptr = (char *)file;
-    while (*ptr) {
-        if (*ptr == '\n') {
-            new_lines++;
-        }
-
-        ptr++;
-    }
     // u64 *ptr = (u64 *)file;
     // while (*ptr) {
     //     u64 value = *ptr;
@@ -164,7 +176,7 @@ int main(int argc, char **argv)
     //     ptr++;
     // }
 
-    printf("lines = %d\n", new_lines);
+    // printf("lines = %d\n", new_lines);
 
     LARGE_INTEGER end = win32_get_wall_clock();
     
@@ -183,4 +195,12 @@ Results:
     Counting lines (single core):
         Seconds elapsed = 7.96
         Seconds elapsed = 7.91
+    
+    Using all cores available (20 in my machine):
+        Seconds elapsed = 8.90
+        Seconds elapsed = 1.03
+        Seconds elapsed = 1.02
+        Seconds elapsed = 0.95
+        Seconds elapsed = 0.98
+        Seconds elapsed = 0.99
 */
