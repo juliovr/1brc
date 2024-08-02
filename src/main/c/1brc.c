@@ -1,6 +1,10 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <wchar.h>
+#include <locale.h>
 #include <windows.h>
 
 typedef int8_t  s8;
@@ -31,39 +35,6 @@ inline f32 win32_get_seconds_elapsed(LARGE_INTEGER start, LARGE_INTEGER end)
     return result;
 }
 
-// u8 number_of_trailing_zeros(s64 v)
-// {
-//     u8 c = 64; // c will be the number of zero bits on the right
-//     v &= -(s64)v;
-//     if (v) c--;
-//     if (v & 0x0000FFFF) c -= 16;
-//     if (v & 0x00FF00FF) c -= 8;
-//     if (v & 0x0F0F0F0F) c -= 4;
-//     if (v & 0x33333333) c -= 2;
-//     if (v & 0x55555555) c -= 1;
-
-//     return c;
-// }
-
-// static u64 next_new_line(u64 *address) {
-//     while (1) {
-//         u64 value = *address;
-
-//         u64 mask = 0x0A0A0A0A0A0A0A0AL;
-//         u64 masked = value ^ mask;
-//         u64 pos_new_line = (masked - 0x0101010101010101L) & (~value) & (0x8080808080808080L);
-
-//         if (pos_new_line != 0) {
-//             address += number_of_trailing_zeros(pos_new_line) >> 3; // Divide by 3 to get the index of the char
-//             break;
-//         }
-
-//         address += 8;
-//     }
-
-//     return address;
-// }
-
 static int BITS_TABLE[] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
 
 static int count_set_bits(u64 l) {
@@ -77,27 +48,72 @@ static int count_set_bits(u64 l) {
     return count;
 }
 
+static char *next_character(char *ptr, char c)
+{
+    while (*ptr && *ptr != c) {
+        ptr++;
+    }
+    
+    return ptr;
+}
+
+/*
+Returns the address of the next new line.
+*/
+static char *next_new_line(char *ptr)
+{
+    return next_character(ptr, '\n');
+}
+
 typedef struct ThreadParams {
     char *file_ptr_start;
     char *file_ptr_end;
-    int lines;
 } ThreadParams;
 
 DWORD thread_function(LPVOID lp_param)
 {
     ThreadParams *params = (ThreadParams *)lp_param;
     
+    wchar_t station_name[50];
+    
     int lines = 0;
     char *ptr = params->file_ptr_start;
-    while (ptr < params->file_ptr_end) {
-        if (*ptr == '\n') {
-            lines++;
+    char *ptr_semicolon;
+    char *ptr_new_line;
+    while (ptr <= params->file_ptr_end) {
+        ptr_semicolon = next_character(ptr, ';');
+        ptr_new_line = next_new_line(ptr_semicolon);
+        
+        if (ptr_new_line) {
+            int station_name_length = (int)(ptr_semicolon - ptr);
+            int value_length = (int)(ptr_new_line - ptr_semicolon - 1);
+            
+            // Parse station_name
+            // TODO: fix station_name_length. For wide characters it consider the bytes, not chars, so 2-bytes char is length 2 instead of 1.
+            mbstowcs(station_name, ptr, station_name_length);
+            
+            // Parse value
+            s16 value = 0;
+            char *ptr_value = ptr_new_line - 1;
+            int dec = 1;
+            while (ptr_value > ptr_semicolon) {
+                char c = *ptr_value--;
+                if (c == '-') {
+                    value *= -1;
+                } else if (c == '.') {
+                    continue;
+                } else {
+                    value += (s16)((int)(c - '0') * dec);
+                    dec *= 10;
+                }
+            }
+            
+            
+            printf("station name = %.*ls, value = %.*s\n", station_name_length, station_name, value_length, ptr_semicolon + 1);
         }
         
-        ptr++;
+        ptr = ptr_new_line + 1;
     }
-    
-    params->lines = lines;
     
     return 0;
 }
@@ -113,12 +129,11 @@ int main(int argc, char **argv)
 
     SYSTEM_INFO system_info;
     GetSystemInfo(&system_info);
-    printf("cores = %d\n", system_info.dwNumberOfProcessors);
-
+    
     LARGE_INTEGER start = win32_get_wall_clock();
 
-    char *filename = "../measurements.txt";
-    // char *filename = "../measurements_test.txt";
+    // char *filename = "../measurements.txt";
+    char *filename = "../measurements_test.txt";
     HANDLE file_handle = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, NULL);
     if (file_handle == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "ERROR: Cannot open file %s, error code = %d\n", filename, GetLastError());
@@ -141,42 +156,34 @@ int main(int argc, char **argv)
     GetFileSizeEx(file_handle, &file_size_result);
     s64 file_size = file_size_result.QuadPart;
     
-    
-    int n_threads = system_info.dwNumberOfProcessors;
-    // int n_threads = 1;
+
+    setlocale(LC_ALL, "en_US.UTF8");
+        
+    // int n_threads = system_info.dwNumberOfProcessors;
+    int n_threads = 1;
     HANDLE *threads = (HANDLE *)malloc(n_threads * sizeof(HANDLE));
     ThreadParams *thread_params = (ThreadParams *)malloc(n_threads * sizeof(ThreadParams));
     
     s64 chunk_size = file_size / n_threads;
-    int last_chunk = (int)(file_size - (chunk_size * (n_threads - 1)));
+    char *file_end_address = ((char *)file) + file_size;
+    char *file_ptr = (char *)file;
     for (int i = 0; i < n_threads; i++) {
-        char *file_start = ((char *)file) + (chunk_size * i);
-        thread_params[i].file_ptr_start = file_start;
-        thread_params[i].file_ptr_end = (i == n_threads - 1) ? ((char *)file) + file_size : file_start + chunk_size;
+        thread_params[i].file_ptr_start = file_ptr;
+        thread_params[i].file_ptr_end = (i == n_threads - 1) ? file_end_address : next_new_line(file_ptr + chunk_size);
+        
+        file_ptr = thread_params[i].file_ptr_end + 1;
+        
         threads[i] = CreateThread(NULL, 0, thread_function, thread_params + i, 0, 0);
     }
     
     WaitForMultipleObjects(n_threads, threads, TRUE, INFINITE);
     
-    int lines = 0;
-    for (int i = 0; i < n_threads; i++) {
-        lines += thread_params[i].lines;
-    }
-
-    printf("lines = %d\n", lines);
-
-    // printf("%s\n", (char *)file);
-
-    // u64 *ptr = (u64 *)file;
-    // while (*ptr) {
-    //     u64 value = *ptr;
-    //     u64 masked = value ^ 0x0A0A0A0A0A0A0A0AL;
-    //     u64 has_new_line = (masked - 0x0101010101010101L) & (~value) & (0x8080808080808080L);
-    //     new_lines += count_set_bits(has_new_line);
-    //     ptr++;
+    // int lines = 0;
+    // for (int i = 0; i < n_threads; i++) {
+    //     lines += thread_params[i].lines;
     // }
 
-    // printf("lines = %d\n", new_lines);
+    // printf("lines = %d\n", lines);
 
     LARGE_INTEGER end = win32_get_wall_clock();
     
