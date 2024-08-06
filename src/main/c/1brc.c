@@ -179,21 +179,25 @@ DWORD thread_function(LPVOID lp_param)
             // TODO: fix station_name_length. For wide characters it consider the bytes, not chars, so 2-bytes char is length 2 instead of 1.
             // mbstowcs(station_name, ptr, station_name_length);
             
-            // Parse value
+            // Parse value. The range goes from -99.9 to 99.9, so the decimal point always goes into 1 or second index (excluding the sign).
+            // This is an optimize version taking advantage of this particular case.
             s16 value = 0;
-            char *ptr_value = ptr_new_line - 1;
-            int dec = 1;
-            while (ptr_value > ptr_semicolon) {
-                char c = *ptr_value--;
-                if (c == '-') {
-                    value *= -1;
-                } else if (c == '.') {
-                    continue;
-                } else {
-                    value += (s16)((c - '0') * dec);
-                    dec *= 10;
-                }
+            char *ptr_value = ptr_semicolon + 1;
+            s8 sign = 1;
+            if (ptr_value[0] == '-') {
+                sign = (s8)-1;
+                ptr_value++;
             }
+            
+            if (ptr_value[1] == '.') {
+                value = ((ptr_value[0] - '0') * 10) + (ptr_value[2] - '0');
+            } else if (ptr_value[2] == '.') {
+                value = ((ptr_value[0] - '0') * 100) + ((ptr_value[1] - '0') * 10) + (ptr_value[3] - '0');
+            }
+            
+            value *= sign;
+            
+            
             // printf("value = %d\n", value);
             
             HashMapEntry *entry = hash_map_get(hash_map, ptr, station_name_length);
@@ -288,17 +292,6 @@ int main(int argc, char **argv)
     }
     
     WaitForMultipleObjects(n_threads, threads, TRUE, INFINITE);
-    
-    // int lines = 0;
-    // for (int i = 0; i < n_threads; i++) {
-    //     lines += thread_params[i].lines;
-    // }
-
-    // printf("lines = %d\n", lines);
-    // for (int i = 0; i < n_threads; i++) {
-    //     HashMap *hash_map = thread_params[i].hash_map;
-    //     int x = 5;
-    // }
 
     LARGE_INTEGER end = win32_get_wall_clock();
     
@@ -324,5 +317,7 @@ Results counting lines
         Seconds elapsed = 1.02
         Seconds elapsed = 0.95
         Seconds elapsed = 0.98
-        Seconds elapsed = 0.99
+
+Results calculating results in their own hashmaps:
+    Seconds elapsed = 3.26
 */
