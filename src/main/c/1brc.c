@@ -66,32 +66,15 @@ static char *next_character(char *ptr, char c)
 
 
 typedef struct HashMapEntry {
-    // char station_name[MAX_STATION_NAME_LENGTH];
     char *station_name;
     int station_name_length;
-    // s16 value;
     s16 min;
     s16 max;
     s16 count;
     s16 sum;
-    
-    // TODO: since there are 10000 max stations, maybe it is a good idea to use linear probing instead of linked list
-    struct HashMapEntry *next;
 } HashMapEntry;
 
-typedef struct HashMap {
-    HashMapEntry *entries[MAX_STATIONS];
-} HashMap;
-
-static HashMap *hash_map_init()
-{
-    HashMap *hash_map = (HashMap *)malloc(sizeof(HashMap));
-    for (int i = 0; i < MAX_STATIONS; ++i) {
-        hash_map->entries[i] = NULL;
-    }
-    
-    return hash_map;
-}
+static HashMapEntry *all_entries;
 
 static u32 hash(char *string, int length)
 {
@@ -115,47 +98,13 @@ static int str_equals(char *s1, int length1, char *s2, int length2)
     return 1;
 }
 
-static void hash_map_insert(HashMap *hash_map, HashMapEntry *new_entry)
-{
-    u32 entry_hash = hash(new_entry->station_name, new_entry->station_name_length);
-    HashMapEntry *entry = hash_map->entries[entry_hash];
-    while (entry)
-    {
-        if (str_equals(entry->station_name, entry->station_name_length, 
-                       new_entry->station_name, new_entry->station_name_length))
-        {
-            return;
-        }
-        
-        entry = entry->next;
-    }
-    
-    new_entry->next = hash_map->entries[entry_hash];
-    hash_map->entries[entry_hash] = new_entry;
-}
-
-static HashMapEntry *hash_map_get(HashMap *hash_map, char *station_name, int station_name_length)
-{
-    u32 entry_hash = hash(station_name, station_name_length);
-    HashMapEntry *entry = hash_map->entries[entry_hash];
-    while (entry && !str_equals(entry->station_name, entry->station_name_length,
-                                station_name, station_name_length))
-    {
-        entry = entry->next;
-    }
-    
-    return entry;
-}
-
 typedef struct ThreadParams {
     u8 tid;
+    u32 entries_index;
     char *file_ptr_start;
     char *file_ptr_end;
-    int entries_index;
 } ThreadParams;
 
-static HashMap *hash_map;
-static HashMapEntry *all_entries;
 
 DWORD thread_function(LPVOID lp_param)
 {
@@ -200,14 +149,23 @@ DWORD thread_function(LPVOID lp_param)
             
             // printf("value = %d\n", value);
             
-            HashMapEntry *entry = hash_map_get(hash_map, ptr, station_name_length);
-            if (!entry) {
-                int entries_base_index = params->tid * MAX_STATIONS;
-                entry = all_entries + entries_base_index + params->entries_index++;
+            // Get entry if exists
+            int entries_base_index = params->tid * MAX_STATIONS;
+            u32 entry_hash = hash(ptr, station_name_length);
+            HashMapEntry *entry = all_entries + entries_base_index + entry_hash;
+            while (entry->station_name && !str_equals(entry->station_name, entry->station_name_length,
+                                                      ptr, station_name_length))
+            {
+                ++entry_hash;
+                ++entry;
+            }
+            
+            if (!entry->station_name) {
                 entry->station_name = ptr;
                 entry->station_name_length = station_name_length;
                 
-                hash_map_insert(hash_map, entry);
+                // Insert new entry
+                all_entries[entries_base_index + entry_hash] = *entry;
             }
             
             entry->min = MIN(entry->min, value);
@@ -229,6 +187,8 @@ Ref: https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping
 */
 int main(int argc, char **argv)
 {
+    setlocale(LC_ALL, "en_US.UTF8");
+
     LARGE_INTEGER performance_count_frequency_result;
     QueryPerformanceFrequency(&performance_count_frequency_result);
     performance_count_frequency = (f32)performance_count_frequency_result.QuadPart;
@@ -261,26 +221,26 @@ int main(int argc, char **argv)
         exit(1);
     }
     
-    LPVOID file = MapViewOfFileEx(mmap, FILE_MAP_READ, 0, 0, file_size, 0);
+    char *file = (char *)MapViewOfFileEx(mmap, FILE_MAP_READ, 0, 0, file_size, 0);
     if (file == NULL) {
         fprintf(stderr, "ERROR: Cannot map view file, error code = %d\n", GetLastError());
         exit(1);
     }
-    
-    
-
-    setlocale(LC_ALL, "en_US.UTF8");
-        
+            
     HANDLE *threads = (HANDLE *)malloc(n_threads * sizeof(HANDLE));
     ThreadParams *thread_params = (ThreadParams *)malloc(n_threads * sizeof(ThreadParams));
     
-    hash_map = hash_map_init();
-    all_entries = (HashMapEntry *)malloc(sizeof(HashMapEntry) * MAX_STATIONS * n_threads);
+    HashMapEntry empty = {0};
+    u32 entries_size = MAX_STATIONS * n_threads;
+    all_entries = (HashMapEntry *)malloc(entries_size * sizeof(HashMapEntry));
+    for (u32 i = 0; i < entries_size; ++i) {
+        all_entries[i] = empty;
+    }
     
     s64 chunk_size = file_size / n_threads;
-    char *file_end_address = ((char *)file) + file_size;
-    char *file_ptr = (char *)file;
-    for (int i = 0; i < n_threads; i++) {
+    char *file_end_address = file + file_size;
+    char *file_ptr = file;
+    for (int i = 0; i < n_threads; ++i) {
         thread_params[i].tid = (u8)i;
         thread_params[i].file_ptr_start = file_ptr;
         thread_params[i].file_ptr_end = (i == n_threads - 1) ? file_end_address : next_character(file_ptr + chunk_size, '\n');
@@ -320,4 +280,9 @@ Results counting lines
 
 Results calculating results in their own hashmaps:
     Seconds elapsed = 3.26
+    
+Results using all_entries as THE hashmap:
+    Seconds elapsed = 2.39
+
+
 */
