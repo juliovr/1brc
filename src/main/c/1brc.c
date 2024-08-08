@@ -253,6 +253,50 @@ int main(int argc, char **argv)
     
     WaitForMultipleObjects(n_threads, threads, TRUE, INFINITE);
 
+    
+    // Join the results
+    HashMapEntry result[MAX_STATIONS];
+    memset(result, 0, MAX_STATIONS * sizeof(HashMapEntry));
+    
+    for (int i = 0; i < n_threads; ++i) {
+        int entries_base_index = thread_params[i].tid * MAX_STATIONS;
+        for (int j = 0; j < MAX_STATIONS; ++j) {
+            HashMapEntry entry = all_entries[entries_base_index + j];
+            if (entry.station_name) {
+                u32 entry_hash = hash(entry.station_name, entry.station_name_length);
+                HashMapEntry *result_entry = result + entry_hash;
+                
+                while (result_entry->station_name && !str_equals(result_entry->station_name, result_entry->station_name_length,
+                                                                 entry.station_name, entry.station_name_length))
+                {
+                    ++entry_hash;
+                }
+                
+                if (!result_entry->station_name) {
+                    result_entry->station_name = entry.station_name;
+                    result_entry->station_name_length = entry.station_name_length;
+                }
+                
+                result_entry->min = MIN(result_entry->min, entry.min);
+                result_entry->max = MAX(result_entry->max, entry.max);
+                result_entry->count++;
+                result_entry->sum += entry.sum;
+            }
+        }
+    }
+    
+    printf("{\n");
+    for (int i = 0; i < MAX_STATIONS; ++i) {
+        HashMapEntry entry = result[i];
+        if (entry.station_name) {
+            printf("%.*s=%d/%d/%d\n", entry.station_name_length, entry.station_name, 
+                                      // entry.min, (double)entry.sum / (double)entry.count, entry.max); // TODO: convert to double
+                                      entry.min, entry.sum, entry.max);
+        }
+    }
+    printf("}\n");
+    
+
     LARGE_INTEGER end = win32_get_wall_clock();
     
     f32 seconds_elapsed = win32_get_seconds_elapsed(start, end);
