@@ -182,6 +182,58 @@ DWORD thread_function(LPVOID lp_param)
     return 0;
 }
 
+static inline int char_at(char *s, int length, int d)
+{
+    if (d < length) {
+        return s[d];
+    } else {
+        return -1;
+    }
+}
+
+static void sort(HashMapEntry result[], int lo, int hi, int d)
+{
+    if (hi <= lo) return;
+    
+    int lt = lo;
+    int gt = hi;
+    
+    if (!result[lo].station_name) return;
+    
+    int v = char_at(result[lo].station_name, result[lo].station_name_length, d);
+    int i = lo + 1;
+    while (i <= gt) {
+        if (!result[i].station_name) {
+            ++i;
+            continue;
+        }
+        
+        int t = char_at(result[i].station_name, result[i].station_name_length, d);
+        if (t < v) {
+            HashMapEntry temp = result[lt];
+            result[lt] = result[i];
+            result[i] = temp;
+            
+            ++lt;
+            ++i;
+        } else if (t > v) {
+            HashMapEntry temp = result[i];
+            result[i] = result[gt];
+            result[gt] = temp;
+            
+            --gt;
+        } else {
+            ++i;
+        }
+    }
+    
+    sort(result, lo, lt-1, d);
+    if (v >= 0) {
+        sort(result, lt, gt, d+1);
+    }
+    sort(result, gt+1, hi, d);
+}
+
 /*
 Ref: https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping
 */
@@ -279,19 +331,24 @@ int main(int argc, char **argv)
                 
                 result_entry->min = MIN(result_entry->min, entry.min);
                 result_entry->max = MAX(result_entry->max, entry.max);
-                result_entry->count++;
+                result_entry->count += entry.count;
                 result_entry->sum += entry.sum;
             }
         }
     }
     
+
+    sort(result, 0, MAX_STATIONS - 1, 0);
+    
     printf("{\n");
     for (int i = 0; i < MAX_STATIONS; ++i) {
         HashMapEntry entry = result[i];
         if (entry.station_name) {
-            printf("%.*s=%d/%d/%d\n", entry.station_name_length, entry.station_name, 
-                                      // entry.min, (double)entry.sum / (double)entry.count, entry.max); // TODO: convert to double
-                                      entry.min, entry.sum, entry.max);
+            // TODO: Check why the average value is wrong!!
+            printf("%.*s=%.1f/%.1f/%.1f\n", entry.station_name_length, entry.station_name, 
+                                      (double)entry.min / 10.0, 
+                                      ((double)entry.sum / (double)entry.count) / 10.0, 
+                                      (double)entry.max / 10.0);
         }
     }
     printf("}\n");

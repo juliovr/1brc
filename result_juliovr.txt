@@ -122,8 +122,7 @@ Erbil=-35.3/19.5/68.5
 Erzurum=-49.4/5.1/54.3
 Fairbanks=-50.5/-2.3/47.4
 Fianarantsoa=-31.3/17.9/68.0
-Flores
- Petén=-25.7/26.4/81.5
+Flores,  Petén=-25.7/26.4/81.5
 Frankfurt=-38.8/10.6/58.6
 Fresno=-36.1/17.9/67.0
 Fukuoka=-39.1/17.0/73.0
@@ -393,8 +392,7 @@ Vilnius=-47.2/6.0/56.8
 Virginia Beach=-34.4/15.8/67.7
 Vladivostok=-45.0/4.9/52.5
 Warsaw=-42.5/8.5/58.8
-Washington
-D.C.=-35.2/14.6/63.3
+Washington, D.C.=-35.2/14.6/63.3
 Wau=-23.3/27.8/78.4
 Wellington=-37.7/12.9/63.3
 Whitehorse=-49.5/-0.1/47.5
