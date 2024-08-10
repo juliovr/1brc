@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <wchar.h>
-#include <locale.h>
 #include <windows.h>
 
 typedef int8_t  s8;
@@ -20,7 +18,6 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
-#define MAX_STATION_NAME_LENGTH 100
 #define MAX_STATIONS 10000
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -70,8 +67,8 @@ typedef struct HashMapEntry {
     int station_name_length;
     s16 min;
     s16 max;
-    s16 count;
-    s16 sum;
+    u32 count;
+    s32 sum;
 } HashMapEntry;
 
 static HashMapEntry *all_entries;
@@ -110,13 +107,11 @@ DWORD thread_function(LPVOID lp_param)
 {
     ThreadParams *params = (ThreadParams *)lp_param;
     
-    // wchar_t station_name[50];
-    
     int lines = 0;
     char *ptr = params->file_ptr_start;
     char *ptr_semicolon;
     char *ptr_new_line;
-    while (ptr <= params->file_ptr_end) {
+    while (ptr < params->file_ptr_end) {
         ptr_semicolon = next_character(ptr, ';');
         ptr_new_line = next_character(ptr_semicolon, '\n');
         
@@ -124,12 +119,6 @@ DWORD thread_function(LPVOID lp_param)
             int station_name_length = (int)(ptr_semicolon - ptr);
             int value_length = (int)(ptr_new_line - ptr_semicolon - 1);
             
-            // Parse station_name
-            // TODO: fix station_name_length. For wide characters it consider the bytes, not chars, so 2-bytes char is length 2 instead of 1.
-            // mbstowcs(station_name, ptr, station_name_length);
-            
-            // Parse value. The range goes from -99.9 to 99.9, so the decimal point always goes into 1 or second index (excluding the sign).
-            // This is an optimize version taking advantage of this particular case.
             s16 value = 0;
             char *ptr_value = ptr_semicolon + 1;
             s8 sign = 1;
@@ -147,8 +136,6 @@ DWORD thread_function(LPVOID lp_param)
             value *= sign;
             
             
-            // printf("value = %d\n", value);
-            
             // Get entry if exists
             int entries_base_index = params->tid * MAX_STATIONS;
             u32 entry_hash = hash(ptr, station_name_length);
@@ -165,15 +152,13 @@ DWORD thread_function(LPVOID lp_param)
                 entry->station_name_length = station_name_length;
                 
                 // Insert new entry
-                all_entries[entries_base_index + entry_hash] = *entry;
+                all_entries[entries_base_index + entry_hash] = *entry;    
             }
             
             entry->min = MIN(entry->min, value);
             entry->max = MAX(entry->max, value);
             entry->count++;
             entry->sum += value;
-            
-            // printf("station name = %.*ls, value = %.*s\n", station_name_length, station_name, value_length, ptr_semicolon + 1);
         }
         
         ptr = ptr_new_line + 1;
@@ -182,56 +167,28 @@ DWORD thread_function(LPVOID lp_param)
     return 0;
 }
 
-static inline int char_at(char *s, int length, int d)
+/* QuickSort compare function callback */
+int cmp(const void *ptr1, const void *ptr2)
 {
-    if (d < length) {
-        return s[d];
-    } else {
+    HashMapEntry *entry1 = (HashMapEntry *)ptr1;
+    HashMapEntry *entry2 = (HashMapEntry *)ptr2;
+    
+    if (entry1->station_name && !entry2->station_name) {
         return -1;
     }
+    
+    if (!entry1->station_name && entry2->station_name) {
+        return 1;
+    }
+    
+    int length = MIN(entry1->station_name_length, entry2->station_name_length);
+    
+    return strncmp(entry1->station_name, entry2->station_name, length);
 }
 
 static void sort(HashMapEntry result[], int lo, int hi, int d)
 {
-    if (hi <= lo) return;
-    
-    int lt = lo;
-    int gt = hi;
-    
-    if (!result[lo].station_name) return;
-    
-    int v = char_at(result[lo].station_name, result[lo].station_name_length, d);
-    int i = lo + 1;
-    while (i <= gt) {
-        if (!result[i].station_name) {
-            ++i;
-            continue;
-        }
-        
-        int t = char_at(result[i].station_name, result[i].station_name_length, d);
-        if (t < v) {
-            HashMapEntry temp = result[lt];
-            result[lt] = result[i];
-            result[i] = temp;
-            
-            ++lt;
-            ++i;
-        } else if (t > v) {
-            HashMapEntry temp = result[i];
-            result[i] = result[gt];
-            result[gt] = temp;
-            
-            --gt;
-        } else {
-            ++i;
-        }
-    }
-    
-    sort(result, lo, lt-1, d);
-    if (v >= 0) {
-        sort(result, lt, gt, d+1);
-    }
-    sort(result, gt+1, hi, d);
+    qsort(result, MAX_STATIONS, sizeof(HashMapEntry), cmp);
 }
 
 /*
@@ -239,8 +196,6 @@ Ref: https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping
 */
 int main(int argc, char **argv)
 {
-    setlocale(LC_ALL, "en_US.UTF8");
-
     LARGE_INTEGER performance_count_frequency_result;
     QueryPerformanceFrequency(&performance_count_frequency_result);
     performance_count_frequency = (f32)performance_count_frequency_result.QuadPart;
@@ -285,9 +240,7 @@ int main(int argc, char **argv)
     HashMapEntry empty = {0};
     u32 entries_size = MAX_STATIONS * n_threads;
     all_entries = (HashMapEntry *)malloc(entries_size * sizeof(HashMapEntry));
-    for (u32 i = 0; i < entries_size; ++i) {
-        all_entries[i] = empty;
-    }
+    memset(all_entries, 0, entries_size * sizeof(HashMapEntry));
     
     s64 chunk_size = file_size / n_threads;
     char *file_end_address = file + file_size;
@@ -295,7 +248,8 @@ int main(int argc, char **argv)
     for (int i = 0; i < n_threads; ++i) {
         thread_params[i].tid = (u8)i;
         thread_params[i].file_ptr_start = file_ptr;
-        thread_params[i].file_ptr_end = (i == n_threads - 1) ? file_end_address : next_character(file_ptr + chunk_size, '\n');
+        char *next = next_character(file_ptr + chunk_size, '\n');
+        thread_params[i].file_ptr_end = (i == n_threads - 1) ? file_end_address : next;
         thread_params[i].entries_index = 0;
         
         file_ptr = thread_params[i].file_ptr_end + 1;
@@ -316,12 +270,19 @@ int main(int argc, char **argv)
             HashMapEntry entry = all_entries[entries_base_index + j];
             if (entry.station_name) {
                 u32 entry_hash = hash(entry.station_name, entry.station_name_length);
-                HashMapEntry *result_entry = result + entry_hash;
                 
-                while (result_entry->station_name && !str_equals(result_entry->station_name, result_entry->station_name_length,
-                                                                 entry.station_name, entry.station_name_length))
-                {
-                    ++entry_hash;
+                HashMapEntry *result_entry;
+                for (;;) {
+                    result_entry = result + entry_hash;
+                    if (result_entry->station_name && !str_equals(result_entry->station_name, result_entry->station_name_length,
+                                                                  entry.station_name, entry.station_name_length))
+                    {
+                        ++entry_hash;
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
                 
                 if (!result_entry->station_name) {
@@ -339,12 +300,12 @@ int main(int argc, char **argv)
     
 
     sort(result, 0, MAX_STATIONS - 1, 0);
-    
+
+#if 1
     printf("{\n");
     for (int i = 0; i < MAX_STATIONS; ++i) {
         HashMapEntry entry = result[i];
         if (entry.station_name) {
-            // TODO: Check why the average value is wrong!!
             printf("%.*s=%.1f/%.1f/%.1f\n", entry.station_name_length, entry.station_name, 
                                       (double)entry.min / 10.0, 
                                       ((double)entry.sum / (double)entry.count) / 10.0, 
@@ -352,7 +313,7 @@ int main(int argc, char **argv)
         }
     }
     printf("}\n");
-    
+#endif    
 
     LARGE_INTEGER end = win32_get_wall_clock();
     
@@ -365,25 +326,3 @@ int main(int argc, char **argv)
 
     return 0;
 }
-
-/*
-Results counting lines
-    Single core:
-        Seconds elapsed = 7.96
-        Seconds elapsed = 7.91
-    
-    Using all cores available (20 in my machine):
-        Seconds elapsed = 8.90
-        Seconds elapsed = 1.03
-        Seconds elapsed = 1.02
-        Seconds elapsed = 0.95
-        Seconds elapsed = 0.98
-
-Results calculating results in their own hashmaps:
-    Seconds elapsed = 3.26
-    
-Results using all_entries as THE hashmap:
-    Seconds elapsed = 2.39
-
-
-*/

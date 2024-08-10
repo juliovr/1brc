@@ -155,6 +155,9 @@ public class CalculateAverage_juliovr {
                 }
             }
 
+            Result a = result.get("Busan");
+            System.out.printf("sum = %.2f, count = %d\n", a.sum, a.count);
+
             long totalLines = 0;
             for (int i = 0; i < lines.length; i++) {
                 totalLines += lines[i];

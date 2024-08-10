@@ -1,5 +1,23 @@
 # 1️⃣🐝🏎️ The One Billion Row Challenge
 
+## juliovr report
+
+As the challenge is already finished (and I don't come as close as other people), I left my results here.
+
+In Java, my program runs in about 6 seconds. Techniques I learned while doing this challenge:
+- FileChannel to mmap the file into a virtual memory segment.
+- Use Unsafe class to read the address of the file.
+
+I wanted to try how much I could do in C, so I made `src/main/c/1brc.c` to try it out.
+Here, the program runs in about 2.5 seconds.
+
+In both cases, the programs create 1 thread per cpu core available in the machine.
+Each thread is assign with the file's chunk to process. This is calculated by `file_size/cores + next_new_line`, so each thread can compute fully partial results.
+
+
+
+## Original README
+
 _Status Feb 4: The final leaderboards [have been published](https://www.morling.dev/blog/1brc-results-are-in/). Congrats to all the winners, and a big thank you to everyone participating in this challenge as well as to everyone helping to organize it!_
 
 _Status Feb 3: All entries have been evaluated and I am in the process of finalizing the leaderboards._
