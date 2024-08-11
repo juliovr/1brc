@@ -9,7 +9,8 @@ In Java, my program runs in about 6 seconds. Techniques I learned while doing th
 - Use Unsafe class to read the address of the file.
 
 I wanted to try how much I could do in C, so I made `src/main/c/1brc.c` to try it out.
-Here, the program runs in about 2.5 seconds.
+Here, the program runs in about 2.42 seconds.
+Using SIMD to compare strings, the running time goes down to 2.31 seconds.
 
 In both cases, the programs create 1 thread per cpu core available in the machine.
 Each thread is assign with the file's chunk to process. This is calculated by `file_size/cores + next_new_line`, so each thread can compute fully partial results.

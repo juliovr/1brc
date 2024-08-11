@@ -64,11 +64,11 @@ static char *next_character(char *ptr, char c)
 
 typedef struct HashMapEntry {
     char *station_name;
-    int station_name_length;
-    s16 min;
-    s16 max;
+    u8 station_name_length;
     u32 count;
     s32 sum;
+    s16 min;
+    s16 max;
 } HashMapEntry;
 
 static HashMapEntry *all_entries;
@@ -84,15 +84,15 @@ static u32 hash(char *string, int length)
     return h % (MAX_STATIONS - 1);
 }
 
-static int str_equals(char *s1, int length1, char *s2, int length2)
+#include <nmmintrin.h>
+
+static inline int str_equals(char *s1, int length1, char *s2, int length2)
 {
     if (length1 != length2) return 0;
     
-    while (--length1) {
-        if (*s1++ != *s2++) return 0;
-    }
-    
-    return 1;
+    __m128i a = _mm_loadu_si128((const __m128i *)s1);
+    __m128i b = _mm_loadu_si128((const __m128i *)s2);
+    return _mm_cmpestrc(a, length1, b, length2, _SIDD_CMP_EQUAL_ORDERED);
 }
 
 typedef struct ThreadParams {
@@ -116,9 +116,10 @@ DWORD thread_function(LPVOID lp_param)
         ptr_new_line = next_character(ptr_semicolon, '\n');
         
         if (ptr_new_line) {
-            int station_name_length = (int)(ptr_semicolon - ptr);
-            int value_length = (int)(ptr_new_line - ptr_semicolon - 1);
+            u8 station_name_length = (u8)(ptr_semicolon - ptr);
             
+            // The value's range is between -99.9 to 99.9, so there is no need to make a general function.
+            // This particular one is faster.
             s16 value = 0;
             char *ptr_value = ptr_semicolon + 1;
             s8 sign = 1;
@@ -186,10 +187,6 @@ int cmp(const void *ptr1, const void *ptr2)
     return strncmp(entry1->station_name, entry2->station_name, length);
 }
 
-static void sort(HashMapEntry result[], int lo, int hi, int d)
-{
-    qsort(result, MAX_STATIONS, sizeof(HashMapEntry), cmp);
-}
 
 /*
 Ref: https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping
@@ -299,9 +296,9 @@ int main(int argc, char **argv)
     }
     
 
-    sort(result, 0, MAX_STATIONS - 1, 0);
+    qsort(result, MAX_STATIONS, sizeof(HashMapEntry), cmp);
 
-#if 1
+
     printf("{\n");
     for (int i = 0; i < MAX_STATIONS; ++i) {
         HashMapEntry entry = result[i];
@@ -313,7 +310,7 @@ int main(int argc, char **argv)
         }
     }
     printf("}\n");
-#endif    
+
 
     LARGE_INTEGER end = win32_get_wall_clock();
     
