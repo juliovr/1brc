@@ -240,10 +240,8 @@ int main(int argc, char **argv)
     HANDLE *threads = (HANDLE *)malloc(n_threads * sizeof(HANDLE));
     ThreadParams *thread_params = (ThreadParams *)malloc(n_threads * sizeof(ThreadParams));
     
-    HashMapEntry empty = {0};
-    u32 entries_size = MAX_STATIONS * n_threads;
-    all_entries = (HashMapEntry *)malloc(entries_size * sizeof(HashMapEntry));
-    memset(all_entries, 0, entries_size * sizeof(HashMapEntry));
+    all_entries = (HashMapEntry *)malloc(MAX_STATIONS * n_threads * sizeof(HashMapEntry));
+    memset(all_entries, 0, MAX_STATIONS * n_threads * sizeof(HashMapEntry));
     
     s64 chunk_size = file_size / n_threads;
     char *file_end_address = file + file_size;
