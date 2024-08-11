@@ -10,7 +10,10 @@ In Java, my program runs in about 6 seconds. Techniques I learned while doing th
 
 I wanted to try how much I could do in C, so I made `src/main/c/1brc.c` to try it out.
 Here, the program runs in about 2.42 seconds.
-Using SIMD to compare strings, the running time goes down to 2.31 seconds.
+Improvements using SIMD:
+- _mm_cmpestrc: compare strings. Time goes down to 2.31 seconds.
+- _mm_cmpistri: find index matches a char. Time goes down to 1.94 seconds.
+
 
 In both cases, the programs create 1 thread per cpu core available in the machine.
 Each thread is assign with the file's chunk to process. This is calculated by `file_size/cores + next_new_line`, so each thread can compute fully partial results.

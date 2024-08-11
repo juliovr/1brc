@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <windows.h>
+#include <nmmintrin.h>
 
 typedef int8_t  s8;
 typedef int16_t s16;
@@ -52,10 +53,25 @@ static int count_set_bits(u64 l) {
     return count;
 }
 
-static char *next_character(char *ptr, char c)
+
+static inline int str_equals(char *s1, int length1, char *s2, int length2)
 {
-    while (*ptr && *ptr != c) {
-        ptr++;
+    if (length1 != length2) return 0;
+    
+    __m128i a = _mm_loadu_si128((const __m128i *)s1);
+    __m128i b = _mm_loadu_si128((const __m128i *)s2);
+    return _mm_cmpestrc(a, length1, b, length2, _SIDD_CMP_EQUAL_ORDERED);
+}
+
+static inline char *next_character(char *ptr, char c)
+{
+    int result = 16; // 16 is the max value returned by _mm_cmpistri (when the character is not found)
+    while (*ptr && result == 16) {
+        __m128i a = _mm_loadu_si128((const __m128i *)ptr);
+        __m128i b = _mm_set1_epi8(c);
+        result = _mm_cmpistri(a, b, _SIDD_CMP_EQUAL_EACH);
+        
+        ptr += result;
     }
     
     return ptr;
@@ -84,16 +100,6 @@ static u32 hash(char *string, int length)
     return h % (MAX_STATIONS - 1);
 }
 
-#include <nmmintrin.h>
-
-static inline int str_equals(char *s1, int length1, char *s2, int length2)
-{
-    if (length1 != length2) return 0;
-    
-    __m128i a = _mm_loadu_si128((const __m128i *)s1);
-    __m128i b = _mm_loadu_si128((const __m128i *)s2);
-    return _mm_cmpestrc(a, length1, b, length2, _SIDD_CMP_EQUAL_ORDERED);
-}
 
 typedef struct ThreadParams {
     u8 tid;
